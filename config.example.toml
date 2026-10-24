@@ -1,0 +1,65 @@
+# Portravix settings. Copy this file to config.toml and edit it; anything left out keeps the value shown here.
+# Relative paths are relative to the Portravix folder. Put your own files (face, voice, persona) in my/ -- git
+# ignores that folder, so they never end up in a commit.
+
+[comfyui]
+# ComfyUI with MiniMax H3 support and the MMH3Tools node pack (>= 0.107.0) in custom_nodes.
+dir = "C:/ComfyUI"
+# Its Python. Empty: <dir>/venv/Scripts/python.exe (Windows) or <dir>/venv/bin/python.
+python = ""
+# The launcher asks a running ComfyUI to unload its models before Start, to make room on the GPU.
+url = "http://127.0.0.1:8188"
+free_before_start = true
+# Model files, by name, from ComfyUI's model folders (diffusion_models, text_encoders, vae).
+model = "fasth3_omniref_qad_nvfp4_comfy.safetensors"
+text_encoder = "qwen3vl_32b_minimax_h3_int8_convrot.safetensors"
+video_vae = "minimax_h3_video_vae_int8_convrot.safetensors"
+audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
+
+[face]
+# The person to animate: a clear, front-facing portrait of someone whose likeness you have the right to use.
+image = "my/face.png"
+# The H3 prompt (structured format). Describe the person and their setting; leave out what they say -- the words
+# come from the voice. See prompts/face.txt.
+prompt = "prompts/face.txt"
+size = 512        # square, a multiple of 32. 512 is the largest that keeps up on an RTX 5090.
+window = 56       # frames per chunk: 56 has more headroom, 39 starts replies ~0.7 s sooner but stalls more easily
+steps = 2
+seed = 1
+
+[voice]
+# A Pocket TTS preset voice (eve, mary, jane, anna, vera, jean, charles, paul, george, michael, ...) or a WAV of a
+# voice you have the right to clone. Cloning needs the gated weights: accept the terms at
+# https://huggingface.co/kyutai/pocket-tts and run `hf auth login` once.
+voice = "eve"
+language = "english"
+config = ""       # optional: your own Pocket TTS YAML instead of the built-in language config
+python = ""       # optional: run the TTS worker in another Python (default: this app's)
+threads = 4
+
+[brain]
+# Any OpenAI-compatible chat server: llama.cpp's llama-server, llama-swap, LM Studio, ...
+url = "http://127.0.0.1:8080/v1/chat/completions"
+model = "gemma-4-e4b"
+persona = "my/persona.md"   # the system prompt; re-read when it changes. Missing: a short built-in default.
+max_tokens = 300
+history_turns = 20
+# Send your voice clip with the words, so the reply can follow your tone. Needs an audio-capable model
+# (Gemma 4 E4B is); set false for a text-only model.
+audio = true
+
+[ears]
+# A local copy of istupakov/parakeet-tdt-0.6b-v2-onnx. Empty: downloaded on first use (int8 set, ~660 MB).
+parakeet_dir = ""
+threads = 4
+
+[server]
+host = ""         # empty: this machine's Tailscale address (the page has no login: never expose it publicly)
+port = 8765       # the phone page
+avatar_port = 8766  # the avatar process behind the launcher (localhost only)
+
+[gpu]
+needed_vram_gb = 24   # free VRAM the launcher wants before Start (the face ~17 GB + the LLM + headroom)
+# Optional: a llama-swap server whose idle models the launcher may unload before Start (it never evicts a model
+# that is mid-request). Empty: leave llama-swap alone.
+llama_swap = ""

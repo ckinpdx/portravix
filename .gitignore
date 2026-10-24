@@ -1,0 +1,14 @@
+# Your own files: face, voice, persona, anything personal. Never committed.
+my/
+config.toml
+
+# Generated at run time
+cache/
+logs/
+recordings/
+certs/
+
+# Python
+.venv/
+__pycache__/
+*.pyc

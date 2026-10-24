@@ -1,0 +1,18 @@
+# The Portravix app and its TTS worker, Python 3.11+. CPU only: the GPU work happens in ComfyUI's own Python.
+# (On Windows, pip installs PyTorch's CPU build from PyPI, which is what Pocket TTS needs here.)
+pocket-tts==4.0.0
+numpy>=2
+soxr==1.1.0
+av==18.1.0
+opencv-python==4.11.0.86
+sounddevice==0.5.6
+fastapi==0.156.4
+uvicorn==0.54.0
+websockets==15.0.1
+psutil==7.2.2
+onnxruntime==1.31.0
+onnx-asr==0.12.0
+imageio==2.38.1
+imageio-ffmpeg==0.6.0
+scipy==1.17.1
+pillow

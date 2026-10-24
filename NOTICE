@@ -1,0 +1,18 @@
+Portravix
+Copyright (C) 2026 ckinpdx
+
+Portravix is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+License, version 3 (see LICENSE). It is distributed WITHOUT ANY WARRANTY.
+
+Portravix contains no model weights. It runs models you download yourself, each under its own terms:
+
+MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, Copyright © 2026 MiniMax. All Rights Reserved.
+https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+
+That licence, and its Acceptable Use Policy (its Exhibit A), apply to your use of MiniMax H3 and FastH3 through
+Portravix and to everything Portravix generates with them. Read it before you run Portravix, in particular:
+- the territories it covers (it excludes some countries; check whether it covers you);
+- the Acceptable Use Policy, which among other things forbids impersonating a person without their consent and
+  publishing generated content without clearly disclosing that it is machine-generated.
+
+See THIRD_PARTY_NOTICES.md for the other components.

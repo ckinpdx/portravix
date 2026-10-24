@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0f1115">
+<title>Portravix</title>
+<style>
+  :root { --bg: #0f1115; --panel: #181b22; --line: #2a2f3a; --text: #e8eaef; --dim: #9aa1ad; --accent: #8fb3ff; --me: #23314d; --stop: #ff8f8f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; height: 100dvh; }
+  header { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 560px; margin: 0 auto; padding: 10px 16px; font-size: 14px; color: var(--dim); }
+  #status { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; flex: none; }
+  .dot.live { background: #4cd17a; } .dot.wait { background: #f0b24a; } .dot.error { background: var(--stop); }
+  #power { flex: none; padding: 6px 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 14px; }
+  #power.stop { color: var(--stop); }
+  #power:disabled { opacity: .5; }
+  .stage { position: relative; width: 100%; max-width: 560px; margin: 0 auto; padding: 0 16px; }
+  canvas { display: block; width: 100%; aspect-ratio: 1; border-radius: 14px; background: #000; }
+  #overlay { position: absolute; inset: 0 16px; display: grid; place-items: center; border-radius: 14px;
+    background: rgba(0,0,0,.55); color: var(--text); font-size: 18px; text-align: center; padding: 16px; border: 0; }
+  #overlay[hidden] { display: none; }
+  #net { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 560px; margin: 0 auto; padding: 6px 16px 0; font-size: 12px; color: var(--dim); }
+  #stats { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #stats .bad { color: #f0b24a; }
+  #net select { flex: none; padding: 2px 4px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12px; }
+  #log { flex: 1; overflow-y: auto; width: 100%; max-width: 560px; margin: 0 auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .msg { max-width: 85%; padding: 8px 12px; border-radius: 14px; background: var(--panel); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg.me { align-self: flex-end; background: var(--me); }
+  .msg.pending { color: var(--dim); font-style: italic; }
+  form { display: flex; gap: 8px; width: 100%; max-width: 560px; margin: 0 auto; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
+  input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 22px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 16px; }
+  button.send { padding: 0 18px; border-radius: 22px; border: 0; background: var(--accent); color: #0b1020; font-weight: 600; font-size: 16px; }
+  button.send:disabled { opacity: .5; }
+  button.mic { flex: none; width: 46px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--dim); display: grid; place-items: center; }
+  button.mic.on { background: var(--accent); border-color: var(--accent); color: #0b1020; }
+  button.mic.hearing { background: #ff6b6b; border-color: #ff6b6b; color: #fff; animation: pulse 1s ease-in-out infinite; }
+  button.mic.waiting { color: var(--accent); border-color: var(--accent); }
+  @keyframes pulse { 50% { opacity: .55; } }
+</style>
+</head>
+<body>
+<header><span class="dot" id="dot"></span><span id="status">Checking...</span><button id="power" disabled>...</button></header>
+<div class="stage">
+  <canvas id="video" width="512" height="512"></canvas>
+  <button id="overlay">Tap to start</button>
+</div>
+<div id="net">
+  <span id="stats"></span>
+  <label>Buffer <select id="buffer">
+    <option value="0.6">0.6 s</option><option value="1">1 s</option><option value="1.5">1.5 s</option><option value="2.5">2.5 s</option>
+  </select></label>
+</div>
+<div id="log"></div>
+<form id="form" autocomplete="off">
+  <button type="button" class="mic" id="mic" aria-label="Hands-free voice" title="Hands-free voice">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+  </button>
+  <input id="text" placeholder="Say something..." enterkeyhint="send">
+  <button class="send" id="send" disabled>Send</button>
+</form>
+<script>
+const canvas = document.getElementById("video"), g = canvas.getContext("2d");
+const logEl = document.getElementById("log"), statusEl = document.getElementById("status"), dot = document.getElementById("dot");
+const input = document.getElementById("text"), sendBtn = document.getElementById("send");
+const power = document.getElementById("power"), overlay = document.getElementById("overlay");
+const statsEl = document.getElementById("stats"), bufferSel = document.getElementById("buffer");
+let ctx = null, ws = null, current = null, shown = null, service = { state: "unknown" };
+let h264 = null;  // null until checked: WebCodecs (H.264) exists only on HTTPS pages and localhost
+if (new URLSearchParams(location.search).get("video") === "jpeg") h264 = false;  // ?video=jpeg forces the fallback
+let drawnFrames = 0;
+
+// Playback buffer: seconds of audio/video held before playing. More absorbs a shaky connection; replies start later.
+let jitter = 0.6;
+try { jitter = parseFloat(localStorage.getItem("avatar.buffer")) || 0.6; } catch {}
+bufferSel.value = String(jitter);
+
+function setStatus(text, state) { statusEl.textContent = text; dot.className = "dot " + (state || ""); }
+
+function addMsg(text, cls) {
+  const el = document.createElement("div");
+  el.className = "msg " + (cls || "");
+  el.textContent = text;
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+  return el;
+}
+
+// ---- service control (the launcher) ----
+async function api(path, method) {
+  const r = await fetch(path, { method: method || "GET" });
+  return r.json();
+}
+
+function render() {
+  const s = service.state;
+  const secs = Math.max(0, Math.round(Date.now() / 1000 - (service.since || 0)));
+  power.hidden = service.managed === false;  // serve.py run by hand: no launcher to start or stop it
+  power.disabled = s === "stopping" || s === "unknown";
+  const canStart = s === "stopped" || s === "error" || s === "busy";
+  power.className = canStart ? "" : "stop";
+  power.textContent = canStart ? "Start" : s === "starting" ? "Cancel" : "Stop";
+  if (s === "live") {
+    if (!(ws && ws.readyState === WebSocket.OPEN)) setStatus(ctx ? "Connecting..." : "Live: tap the picture to watch", "wait");
+    else if (service.detail) setStatus(service.detail, "wait");  // e.g. another model has filled the GPU
+    else setStatus("Live", "live");
+  } else if (s === "starting") setStatus(`Starting... ${secs}s (about 90 s)`, "wait");
+  else if (s === "stopping") setStatus("Stopping...", "wait");
+  else if (s === "busy") setStatus(service.detail, "wait");
+  else if (s === "error") setStatus(service.detail || "Error", "error");
+  else if (s === "stopped") setStatus("Stopped", "");
+  sendBtn.disabled = !(ws && ws.readyState === WebSocket.OPEN);
+}
+
+async function poll() {
+  try { service = await api("/api/status"); } catch { service = { state: "unknown" }; setStatus("Can't reach the avatar's computer", "error"); }
+  if (service.state === "live" && ctx && (!ws || ws.readyState === WebSocket.CLOSED)) connect();
+  if (service.state !== "live" && ws && ws.readyState === WebSocket.OPEN) ws.close();
+  render();
+}
+
+power.onclick = async () => {
+  const s = service.state;
+  if (s === "stopped" || s === "error" || s === "busy") {
+    power.disabled = true;
+    service = await api("/api/start", "POST");
+  } else if (confirm(s === "starting" ? "Cancel starting the avatar?" : "Stop the avatar? This frees the GPU.")) {
+    power.disabled = true;
+    service = await api("/api/stop", "POST");
+  }
+  render();
+};
+
+// ---- stream health: what the page sees, shown under the video and reported to the host's log ----
+let stats = null;
+function resetStats() {
+  stats = { codec: h264 ? "h264" : "jpeg", refills: 0, dropped: 0, errors: 0, lastSeq: -1, arrivals: [],
+            minDelay: Infinity, late: 0, low: Infinity, since: Date.now() };
+}
+
+function report(kind, extra) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(Object.assign({ type: kind }, extra)));
+}
+
+function mbps() {
+  const now = Date.now();
+  stats.arrivals = stats.arrivals.filter(([t]) => now - t < 10000);
+  const bytes = stats.arrivals.reduce((sum, [, n]) => sum + n, 0);
+  return bytes * 8 / 1e6 / 10;
+}
+
+function showStats() {
+  if (!stats || !ws || ws.readyState !== WebSocket.OPEN) { statsEl.textContent = ""; return; }
+  const parts = [stats.codec === "h264" ? "H.264" : "JPEG", `${mbps().toFixed(1)} Mbit/s`];
+  if (stats.low !== Infinity) parts.push(`lowest buffer ${stats.low.toFixed(2)} s`);
+  if (stats.late >= 0.3) parts.push(`<span class="bad">late ${stats.late.toFixed(1)} s</span>`);
+  parts.push(stats.refills ? `<span class="bad">refills ${stats.refills}</span>` : "refills 0");
+  parts.push(stats.dropped ? `<span class="bad">dropped ${stats.dropped}</span>` : "dropped 0");
+  statsEl.innerHTML = parts.join(" · ");
+}
+
+setInterval(showStats, 1000);
+setInterval(() => {  // a summary every 30 s; the low/late marks then start over
+  if (!stats || !ws || ws.readyState !== WebSocket.OPEN) return;
+  report("stats", { codec: stats.codec, buffer: jitter, mbps: +mbps().toFixed(2), refills: stats.refills, dropped: stats.dropped,
+                    errors: stats.errors, low: stats.low === Infinity ? null : +stats.low.toFixed(2), late: +stats.late.toFixed(2) });
+  stats.low = Infinity; stats.late = 0;
+}, 30000);
+
+// ---- media stream ----
+let chunks = [], sources = [], nextTime = 0, started = false, chain = Promise.resolve();
+let decoder = null, decoderCodec = null, decoded = [], timestamp = 0, quietUntil = 0;
+let connecting = false, connGen = 0;  // connGen: chunks still decoding from an old connection are discarded
+
+function resetMedia() {
+  speechEnd = 0; waiting = null; wasOpen = false;
+  if (micOn) micState = "listening";
+  for (const s of sources) { try { s.stop(); } catch {} }
+  sources = [];
+  for (const c of chunks) c.frames.forEach((f) => f.close());
+  chunks = []; nextTime = 0; started = false; chain = Promise.resolve();
+  if (decoder && decoder.state !== "closed") decoder.close();
+  decoder = null;
+}
+
+async function checkH264() {
+  if (!("VideoDecoder" in window)) return false;
+  try { return (await VideoDecoder.isConfigSupported({ codec: "avc1.42C01E", codedWidth: 512, codedHeight: 512 })).supported; }
+  catch { return false; }
+}
+
+async function connect() {
+  if (connecting || (ws && ws.readyState !== WebSocket.CLOSED)) return;
+  connecting = true;
+  try { if (h264 === null) h264 = await checkH264(); } finally { connecting = false; }
+  if (ws && ws.readyState !== WebSocket.CLOSED) return;
+  resetMedia();
+  resetStats();
+  const gen = ++connGen;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { report("hello", { video: h264 ? "h264" : "jpeg", buffer: jitter }); render(); };
+  ws.onclose = () => { resetMedia(); render(); };  // poll() reconnects while the service is live
+  ws.onmessage = (e) => {
+    if (typeof e.data === "string") { onText(JSON.parse(e.data)); return; }
+    const buf = e.data, arrived = Date.now();
+    stats.arrivals.push([arrived, buf.byteLength]);
+    chain = chain.then(() => onChunk(buf, arrived, gen)).catch((err) => console.error(err));
+  };
+}
+
+function onText(m) {
+  if (m.type === "hearing" || m.type === "listening") {
+    micState = m.type;
+  } else if (m.type === "heard_audio") {  // you stopped talking: she is working out what you said
+    waiting = { since: Date.now(), replied: false, spoke: false };
+    micState = "listening";
+    heardMsg = addMsg("...", "me pending");
+  } else if (m.type === "heard") {
+    if (heardMsg) {
+      if (m.text) { heardMsg.textContent = m.text; heardMsg.classList.remove("pending"); }
+      else heardMsg.remove();
+    }
+    heardMsg = null;
+    if (!m.text) waiting = null;  // no words in it: no reply, listen again
+  } else if (m.type === "thinking") {
+    current = addMsg("...", "pending");
+  } else if (m.type === "sentence") {
+    if (!current) current = addMsg("", "");
+    if (current.classList.contains("pending")) { current.classList.remove("pending"); current.textContent = ""; }
+    current.textContent += (current.textContent ? " " : "") + m.text;
+    logEl.scrollTop = logEl.scrollHeight;
+  } else if (m.type === "reply") {
+    if (current && current.classList.contains("pending")) current.remove();
+    current = null;
+    if (waiting) { waiting.replied = true; if (!m.text) waiting = null; }
+  }
+}
+
+function decodeJpeg(h, buf, off) {
+  return Promise.all(h.frames.map((n) => {
+    const b = new Blob([new Uint8Array(buf, off, n)], { type: "image/jpeg" });
+    off += n;
+    return createImageBitmap(b);
+  }));
+}
+
+async function decodeH264(h, buf, off) {
+  if (!decoder || decoder.state === "closed" || decoderCodec !== h.avc) {
+    if (decoder && decoder.state !== "closed") decoder.close();
+    decoder = new VideoDecoder({
+      // Copy each frame out and release it at once: hardware decoders have only a few frames to lend.
+      output: (frame) => decoded.push(createImageBitmap(frame).finally(() => frame.close())),
+      error: (e) => console.error("decoder", e),
+    });
+    decoder.configure({ codec: h.avc, optimizeForLatency: true });
+    decoderCodec = h.avc;
+  }
+  decoded = [];
+  h.frames.forEach((n, i) => {
+    decoder.decode(new EncodedVideoChunk({ type: i === 0 ? "key" : "delta", timestamp: (timestamp++) * 40000,
+                                           data: new Uint8Array(buf, off, n) }));
+    off += n;
+  });
+  await decoder.flush();  // every chunk starts with a keyframe, so flushing per chunk is safe
+  return Promise.all(decoded);
+}
+
+async function onChunk(buf, arrived, gen) {
+  if (!ctx || !ws || gen !== connGen) return;
+  const dv = new DataView(buf);
+  const hlen = dv.getUint32(0, true);
+  const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hlen)));
+  let off = 4 + hlen;
+
+  if (stats.lastSeq >= 0 && h.seq > stats.lastSeq + 1) {  // chunks dropped on the way (the host drops for slow links)
+    stats.dropped += h.seq - stats.lastSeq - 1;
+    report("event", { kind: "gap", missing: h.seq - stats.lastSeq - 1, seq: h.seq });
+  }
+  stats.lastSeq = h.seq;
+  const delay = (arrived - h.sent) / 1000;  // includes a fixed clock offset; only the excess over the best counts
+  stats.minDelay = Math.min(stats.minDelay, delay);
+  stats.late = Math.max(stats.late, delay - stats.minDelay);
+
+  const pcm = new Int16Array(buf.slice(off, off + h.audio));
+  off += h.audio;
+  let frames;
+  try {
+    frames = h.codec === "h264" ? await decodeH264(h, buf, off) : await decodeJpeg(h, buf, off);
+  } catch (err) {
+    stats.errors++;
+    report("event", { kind: "decode_error", codec: h.codec, message: String(err) });
+    if (decoder && decoder.state !== "closed") decoder.close();
+    decoder = null;
+    if (h.codec === "h264" && stats.errors >= 3) { h264 = false; ws.close(); }  // fall back to JPEG on reconnect
+    return;
+  }
+  if (!pcm.length || !ws || gen !== connGen) { frames.forEach((f) => f.close()); return; }
+
+  const samples = new Float32Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+  const audio = ctx.createBuffer(1, samples.length, h.rate);
+  audio.copyToChannel(samples, 0);
+  const now = ctx.currentTime;
+  const ahead = nextTime - now;  // buffer left when this chunk is ready to play
+  if (ahead < 0.05) {  // first chunk, or the buffer ran dry: re-buffer
+    if (started && !document.hidden && Date.now() > quietUntil) {
+      stats.refills++;
+      report("event", { kind: "refill", seq: h.seq, dry: +Math.max(0, -ahead).toFixed(2), buffer: jitter });
+    }
+    nextTime = now + jitter;
+  } else if (started) {
+    stats.low = Math.min(stats.low, ahead);
+  }
+  started = true;
+  const src = ctx.createBufferSource();
+  src.buffer = audio;
+  src.connect(ctx.destination);
+  src.start(nextTime);
+  src.onended = () => { sources = sources.filter((s) => s !== src); };
+  sources.push(src);
+  chunks.push({ start: nextTime, duration: audio.duration, fps: h.fps, frames });
+  nextTime += audio.duration;
+  if (h.speech) {  // she is talking in this chunk: keep the mic shut until it has played
+    speechEnd = nextTime;
+    if (waiting) waiting.spoke = true;
+  }
+  while (chunks.length > 1 && chunks[1].start <= now) chunks.shift().frames.forEach((f) => f.close());  // also while hidden
+}
+
+function draw() {
+  if (ctx) {
+    const t = ctx.currentTime;
+    while (chunks.length > 1 && chunks[1].start <= t) chunks.shift().frames.forEach((f) => f.close());
+    const c = chunks[0];
+    if (c && t >= c.start) {
+      const frame = c.frames[Math.min(c.frames.length - 1, Math.floor((t - c.start) * c.fps))];
+      if (frame !== shown) { g.drawImage(frame, 0, 0, canvas.width, canvas.height); shown = frame; drawnFrames++; }
+    }
+  }
+  requestAnimationFrame(draw);
+}
+
+overlay.onclick = () => {
+  ctx = new AudioContext();  // phones only allow sound after a tap
+  overlay.hidden = true;
+  requestAnimationFrame(draw);
+  poll();
+};
+
+// ---- voice, hands-free: while the mic is on, it streams 16 kHz PCM to the host, which finds where you start
+// and stop talking. It is shut while a turn is being answered and while her speech plays (plus TAIL for echo).
+const micBtn = document.getElementById("mic");
+const TAIL = 0.4;
+let micOn = false, micState = "off", micStream = null, micCtx = null;
+let speechEnd = 0;      // AudioContext time her latest scheduled speech ends
+let waiting = null;     // a voice turn in flight: { since, replied, spoke }
+let heardMsg = null;    // your bubble, filled in with what she heard
+let wasOpen = false;
+
+const TAP = `class Tap extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Float32Array(2048); this.n = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) for (let i = 0; i < ch.length; i++) {
+      this.buf[this.n++] = ch[i];
+      if (this.n === this.buf.length) { this.port.postMessage(this.buf.slice()); this.n = 0; }
+    }
+    return true;
+  }
+}
+registerProcessor("tap", Tap);`;
+
+async function startMic() {
+  if (!navigator.mediaDevices) throw new Error("the microphone needs the https:// address");
+  // Raw capture by default: the browser's auto gain clipped speech and Gemma misheard it (2026-10-21 test), and
+  // echo cancellation isn't needed while the mic is shut during her speech. ?mic=processed turns all three back on.
+  const processed = new URLSearchParams(location.search).get("mic") === "processed";
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: processed, noiseSuppression: processed, autoGainControl: processed } });
+  micCtx = new AudioContext({ sampleRate: 16000 });  // the browser resamples the mic to what Gemma takes
+  await micCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP], { type: "text/javascript" })));
+  const node = new AudioWorkletNode(micCtx, "tap");
+  const silent = micCtx.createGain();
+  silent.gain.value = 0;
+  micCtx.createMediaStreamSource(micStream).connect(node).connect(silent).connect(micCtx.destination);
+  node.port.onmessage = (e) => sendMic(e.data);
+}
+
+function stopMic() {
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  if (micCtx) micCtx.close();
+  micStream = micCtx = null;
+}
+
+function micOpen() {
+  return micOn && !waiting && !!ctx && ctx.currentTime > speechEnd + TAIL && !!ws && ws.readyState === WebSocket.OPEN;
+}
+
+function sendMic(samples) {
+  const open = micOpen();
+  if (open && !wasOpen) report("mic", { on: true });  // (re)opened: the host starts listening afresh
+  wasOpen = open;
+  if (!open) return;
+  const pcm = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) pcm[i] = Math.max(-1, Math.min(1, samples[i])) * 32767;
+  ws.send(pcm.buffer);
+}
+
+function showMic() {
+  if (waiting && ((waiting.replied && waiting.spoke) || Date.now() - waiting.since > 25000)) waiting = null;
+  const open = micOpen();
+  micBtn.className = "mic" + (!micOn ? "" : !open ? " waiting" : micState === "hearing" ? " hearing" : " on");
+  input.placeholder = !micOn ? "Say something..." : !open ? "Mic paused while the avatar answers..."
+    : micState === "hearing" ? "Hearing you..." : "Listening... (or type)";
+}
+setInterval(showMic, 150);
+
+micBtn.onclick = async () => {
+  if (!ctx) overlay.click();  // the same tap starts her sound
+  if (micOn) {
+    micOn = false; micState = "off"; stopMic();
+    report("mic", { on: false, toggle: true });
+  } else {
+    try {
+      await startMic();
+      micOn = true; micState = "listening"; wasOpen = false;
+      report("mic", { on: true, toggle: true });
+    } catch (err) {
+      stopMic();
+      addMsg("Microphone unavailable: " + (err.message || err), "pending");
+    }
+  }
+  showMic();
+};
+
+bufferSel.onchange = () => {
+  jitter = parseFloat(bufferSel.value);
+  try { localStorage.setItem("avatar.buffer", String(jitter)); } catch {}
+  if (ws) { ws.onclose = null; ws.close(); ws = null; resetMedia(); }  // reconnect so the new buffer applies now
+  poll();
+};
+
+document.addEventListener("visibilitychange", () => {
+  quietUntil = Date.now() + 3000;  // a refill right after the screen wakes is the phone's doing, not the network's
+  if (!document.hidden && ctx && ctx.state !== "running") ctx.resume();
+});
+
+document.getElementById("form").onsubmit = (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+  addMsg(text, "me");
+  ws.send(JSON.stringify({ type: "chat", text }));
+  input.value = "";
+};
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
