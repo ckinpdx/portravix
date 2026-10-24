@@ -21,6 +21,13 @@ DEFAULTS = {
     "face": {
         "image": "my/face.png",
         "prompt": "prompts/face.txt",
+        "subject": "the person in <Picture 1>",  # fills {subject} in the prompt files
+        "subject_file": "",                 # or read the subject from a file (overrides subject)
+        "mood_prompts": "prompts/talk_*.txt",  # talk_<mood>.txt: one talking prompt per mood the LLM can tag
+        "idle_prompt": "prompts/idle*.txt",  # paths, a list, or wildcards; rotated while nothing happens
+        "idle_hold": 2,                     # windows each idle variation lasts
+        "listen_prompt": "prompts/listen.txt",
+        "think_prompt": "prompts/think.txt",
         "size": 512,
         "window": 56,
         "steps": 2,
@@ -83,6 +90,41 @@ def resolve(path):
         return ""
     path = os.path.expanduser(str(path))
     return path if os.path.isabs(path) else os.path.join(ROOT, path)
+
+
+def prompt_paths(value):
+    """A prompt setting -- one path, a list, or wildcards like "face/idle*.txt" -- as the existing files, sorted."""
+    import glob
+    out = []
+    for v in (value if isinstance(value, list) else [value]):
+        if not v:
+            continue
+        path = resolve(v)
+        out += sorted(glob.glob(path)) if any(ch in path for ch in "*?[") else ([path] if os.path.exists(path) else [])
+    return out
+
+
+def subject(cfg):
+    """Who the prompts describe ({subject}): [face] subject_file if set and present, else [face] subject."""
+    face = cfg["face"]
+    path = resolve(face.get("subject_file", ""))
+    if path and os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            text = " ".join(f.read().split())
+        if text:
+            return text.rstrip(".")
+    return str(face.get("subject") or "the person in <Picture 1>")
+
+
+def moods(cfg):
+    """[(mood, prompt path)] from the talk_<mood>.txt files [face] mood_prompts finds, in name order."""
+    found = {}
+    for path in prompt_paths(cfg["face"].get("mood_prompts", "")):
+        stem = os.path.splitext(os.path.basename(path))[0]
+        name = stem[5:] if stem.lower().startswith("talk_") else stem
+        if name and name.replace("_", "").isalnum():
+            found.setdefault(name.lower(), path)
+    return sorted(found.items())
 
 
 def comfy_python(cfg):

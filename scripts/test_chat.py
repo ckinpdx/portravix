@@ -60,7 +60,7 @@ for turn in avatar.turns:
     mouth = f"{turn['mouth_start']:.2f} s" if turn.get("mouth_start") is not None else "n/a"
     print(f"\n> {turn['user']}\n< {turn['reply']}")
     print(f"  LLM first sentence {turn['llm_first_sentence'] * 1000:.0f} ms | TTS first audio "
-          f"{turn['tts_first_audio'] * 1000:.0f} ms | mouth starts {mouth} after the message")
+          f"{turn['tts_first_audio'] * 1000:.0f} ms | mouth starts {mouth} after the message | mood {turn.get('mood')}")
 renders = np.array([s[1] for s in avatar.renderer.stats])
 budget = avatar.face.chunk_seconds
 print(f"\nrender median {np.median(renders) * 1000:.0f} ms, max {renders.max() * 1000:.0f} ms over {len(renders)} chunks "
@@ -71,6 +71,8 @@ if avatar.face.timings:
     w = np.array([t["total_s"] for t in avatar.face.timings[1:]] or [avatar.face.timings[0]["total_s"]])
     print(f"face worker's own time per chunk: median {np.median(w) * 1000:.0f} ms, max {w.max() * 1000:.0f} ms; the "
           f"app side adds {(np.median(renders) - np.median(w)) * 1000:.0f} ms")
+if avatar.face.timings:
+    print("face prompts, chunk by chunk:", " ".join(t.get("prompt", "?") for t in avatar.face.timings))
 print(f"lead before each render: min {min(s[3] for s in avatar.renderer.stats):.2f}s")
 for t, missing in avatar.player.underrun_log:
     prior = [i for i, turn in enumerate(avatar.turns) if turn['t0'] <= t]

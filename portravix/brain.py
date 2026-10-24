@@ -28,13 +28,23 @@ DEFAULT_PERSONA = (
 # words when the model takes audio. Gemma 4 E4B writing the words down itself got about half of them wrong.
 VOICE_PROMPT = '(Voice message. My words: "{}")'
 
+# Moods: when the face has a talking prompt per mood, the model starts each reply with a tag naming one. The tag is
+# taken off before speech and picks the face's talking prompt for that reply.
+MOOD_INSTRUCTION = (
+    "Your face shows a mood while you speak. Begin every reply with exactly one mood tag in square brackets, chosen "
+    "from: {tags}. It sets your expression and is never spoken; pick the one that fits how you feel about what you "
+    "are saying. Then reply as usual.")
+
 _SENTENCE_END = re.compile(r'([.!?…]+["\')\]]*)\s+')
 _MARKUP = re.compile(r"[*_#`~>|\[\]{}]")
+_TAG = re.compile(r"\[\s*[A-Za-z][A-Za-z _-]{0,23}\s*\]")
+_LEADING_TAG = re.compile(r"\s*\[\s*([A-Za-z][A-Za-z _-]{0,23})\s*\]\s*")
 
 
 def clean_for_speech(text):
-    """Strip what a TTS would read as symbols: markdown, emoji, stage directions."""
+    """Strip what a TTS would read as symbols: markdown, emoji, stage directions, stray mood tags."""
     text = re.sub(r"\*[^*]+\*", " ", text)  # *smiles*
+    text = _TAG.sub(" ", text)              # [warm]
     text = _MARKUP.sub(" ", text)
     text = text.replace("&", " and ").replace("%", " percent")
     text = "".join(ch for ch in text if unicodedata.category(ch) not in ("So", "Sk", "Cs", "Co", "Cf"))
@@ -54,10 +64,13 @@ def audio_part(audio, rate=16000):
 
 
 class Brain:
-    def __init__(self, url, model, persona_file, max_turns=20, max_tokens=300, audio=True, log=print):
-        """audio: send voice turns' audio to the model as well as the words (needs an audio-capable model)."""
+    def __init__(self, url, model, persona_file, max_turns=20, max_tokens=300, audio=True, moods=(), log=print):
+        """audio: send voice turns' audio to the model as well as the words (needs an audio-capable model).
+        moods: the moods the face has a talking prompt for; the model tags each reply with one (self.mood)."""
         self.url, self.model, self.max_tokens, self.max_turns, self.audio = url, model, max_tokens, max_turns, audio
         self.persona_file, self.log = persona_file, log
+        self.moods = [m.lower() for m in moods]
+        self.mood = None  # the latest reply's mood, when it tagged one the face has
         self.system = DEFAULT_PERSONA
         self._persona_mtime = None
         self.history = []  # alternating user/assistant messages, text only (voice turns: what was heard)
@@ -106,8 +119,24 @@ class Brain:
                     "max_tokens": 1}).read()
 
     def _messages(self, user_content):
-        return [{"role": "system", "content": self.system}, *self.history[-2 * self.max_turns:],
+        system = self.system
+        if self.moods:
+            system += "\n\n" + MOOD_INSTRUCTION.format(tags=", ".join(f"[{m}]" for m in self.moods))
+        return [{"role": "system", "content": system}, *self.history[-2 * self.max_turns:],
                 {"role": "user", "content": user_content}]
+
+    def _take_mood(self, text):
+        """Take a leading [mood] tag off the start of a reply: (rest, done). done is False while the start could
+        still be a tag that has not arrived whole."""
+        stripped = text.lstrip()
+        if not stripped or (stripped.startswith("[") and "]" not in stripped and len(stripped) < 32):
+            return text, False
+        match = _LEADING_TAG.match(text)
+        if not match:
+            return text, True
+        name = match.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        self.mood = name if name in self.moods else None
+        return text[match.end():], True
 
     def reply(self, user_text, images=(), audio=None):
         """Stream the reply; yields cleaned sentences as soon as each one is complete.
@@ -127,7 +156,9 @@ class Brain:
         request = urllib.request.Request(self.url, json.dumps(body).encode(), {"Content-Type": "application/json"})
         t0 = time.perf_counter()
         self.timing = {"start": t0}
+        self.mood = None
         full, pending = [], ""
+        head = bool(self.moods)  # still looking for the mood tag at the start
         with urllib.request.urlopen(request, timeout=120) as response:
             for raw in response:
                 line = raw.decode("utf-8").strip()
@@ -139,11 +170,18 @@ class Brain:
                 self.timing.setdefault("first_token", time.perf_counter())
                 full.append(delta)
                 pending += delta
+                if head:
+                    pending, done = self._take_mood(pending)
+                    if not done:
+                        continue
+                    head = False
                 while (match := _SENTENCE_END.search(pending)):
                     sentence, pending = clean_for_speech(pending[:match.end(1)]), pending[match.end():]
                     if sentence:
                         self.timing.setdefault("first_sentence", time.perf_counter())
                         yield sentence
+        if head:
+            pending, _ = self._take_mood(pending + " ")
         tail = clean_for_speech(pending)
         if tail:
             self.timing.setdefault("first_sentence", time.perf_counter())

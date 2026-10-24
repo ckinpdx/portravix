@@ -3,7 +3,7 @@
 # ignores that folder, so they never end up in a commit.
 
 [comfyui]
-# ComfyUI with MiniMax H3 support and the MMH3Tools node pack (>= 0.107.0) in custom_nodes.
+# ComfyUI with MiniMax H3 support and the MMH3Tools node pack (>= 0.108.0) in custom_nodes.
 dir = "C:/ComfyUI"
 # Its Python. Empty: <dir>/venv/Scripts/python.exe (Windows) or <dir>/venv/bin/python.
 python = ""
@@ -19,9 +19,21 @@ audio_vae = "minimax_h3_audio_vae_fp32.safetensors"
 [face]
 # The person to animate: a clear, front-facing portrait of someone whose likeness you have the right to use.
 image = "my/face.png"
-# The H3 prompt (structured format). Describe the person and their setting; leave out what they say -- the words
-# come from the voice. See prompts/face.txt.
-prompt = "prompts/face.txt"
+# Who the prompts describe: fills {subject} in every prompt file. Describe the person (age, look, hair) and the
+# H3 prompts carry it into each scene, e.g. "the woman in <Picture 1>: an adult woman in her thirties with ...".
+subject = "the person in <Picture 1>"
+subject_file = ""     # or a text file holding the description (overrides subject when it exists)
+# The H3 prompts (structured format), one per thing the face can be doing. Leave out what they say: the words come
+# from the voice. A setting can be one path, a list, or a wildcard ("my/face/idle*.txt"), so adding a file adds a
+# variation. Missing files are skipped, and a missing state falls back to idle, then to talk. Prompts are encoded
+# when the avatar starts, so edits apply at the next start.
+prompt = "prompts/face.txt"                # while the avatar speaks, when no mood prompt applies
+mood_prompts = "prompts/talk_*.txt"        # talk_<mood>.txt: the LLM tags each reply with a mood ([warm] ...),
+                                           # never spoken, and the face talks with that mood's prompt
+idle_prompt = "prompts/idle*.txt"          # while nothing happens: rotated variations
+idle_hold = 2                              # chunks each idle variation lasts (~2 s each)
+listen_prompt = "prompts/listen.txt"       # while you are talking to it (hands-free mic)
+think_prompt = "prompts/think.txt"         # while its reply is being written
 size = 512        # square, a multiple of 32. 512 is the largest that keeps up on an RTX 5090.
 window = 56       # frames per chunk: 56 has more headroom, 39 starts replies ~0.7 s sooner but stalls more easily
 steps = 2

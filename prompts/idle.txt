@@ -1,0 +1,17 @@
+subject_definitions:
+<Subject 1> is {subject}.
+
+summary:
+[reference generation] A static close-up of their face as they listen quietly to someone off camera. Their facial identity is carried entirely from <Picture 1>.
+
+retention_analysis:
+<Subject 1> (appears in [Shot 1]): fully_preserved - their facial identity, skin, hair and clothing from <Picture 1> are retained throughout.
+
+detailed_description:
+[Shot 1] A static close-up of <Subject 1> facing the camera against a plain, softly lit wall. They are silent and listening attentively, lips gently closed, with small natural head movements, slow blinks, the occasional small nod and a faint, relaxed smile. They do not speak. The camera does not move.
+
+overall_soundscape:
+A quiet room; silence.
+
+non_diegetic_music:
+None.

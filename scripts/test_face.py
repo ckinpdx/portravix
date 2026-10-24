@@ -1,10 +1,12 @@
 """The face on its own: stream a speech WAV through the face worker chunk by chunk, as the app does, time every chunk
 against real time, and write the result as an MP4 with the audio.
 
-    python scripts\\test_face.py <speech.wav> [--config config.toml] [--lead 2] [--tail 2] [--out recordings\\face_test.mp4]
+    python scripts\\test_face.py <speech.wav> [--config config.toml] [--lead 2] [--tail 2] [--listen N] [--think N]
+        [--out recordings\\face_test.mp4]
 
---lead / --tail add seconds of silence before and after the speech (the idle face). Needs the GPU free; the worker's
-log is logs\\face_worker.log.
+--lead / --tail add seconds of silence before and after the speech (the idle face). --listen / --think insert N silent
+chunks in those states before the speech, as when you talk to her and she works out a reply. Needs the GPU free; the
+worker's log is logs\\face_worker.log.
 """
 import argparse
 import os
@@ -54,6 +56,8 @@ def main():
     ap.add_argument("--config", default=None)
     ap.add_argument("--lead", type=float, default=2.0)
     ap.add_argument("--tail", type=float, default=2.0)
+    ap.add_argument("--listen", type=int, default=0, help="silent chunks in the listen state before the speech")
+    ap.add_argument("--think", type=int, default=0, help="silent chunks in the think state before the speech")
     ap.add_argument("--out", default=os.path.join(ROOT, "recordings", "face_test.mp4"))
     a = ap.parse_args()
 
@@ -61,20 +65,28 @@ def main():
     face = Face(C.load(a.config))
     print(f"face ready in {time.perf_counter() - t:.1f}s", flush=True)
     rate, spc = face.audio_rate, round(face.chunk_seconds * face.audio_rate)
-    speech = load_wav(a.wav, rate)
-    audio = np.concatenate([np.zeros(int(a.lead * rate), np.float32), speech, np.zeros(int(a.tail * rate), np.float32)])
-    audio = np.pad(audio, (0, (-len(audio)) % spc))
+
+    def chunks(samples, mode):
+        samples = np.pad(samples, (0, (-len(samples)) % spc))
+        return [(c, mode) for c in samples.reshape(-1, spc)]
+
+    plan = (chunks(np.zeros(int(a.lead * rate), np.float32), "idle")
+            + chunks(np.zeros(a.listen * spc, np.float32), "listen")
+            + chunks(np.zeros(a.think * spc, np.float32), "think")
+            + chunks(load_wav(a.wav, rate), "talk")
+            + chunks(np.zeros(int(a.tail * rate), np.float32), "idle"))
+    audio = np.concatenate([c for c, _ in plan])
 
     frames, trips = [], []
     try:
-        for i, chunk in enumerate(audio.reshape(-1, spc)):
+        for i, (chunk, mode) in enumerate(plan):
             t = time.perf_counter()
-            frames.append(face.render(chunk))
+            frames.append(face.render(chunk, mode=mode))
             trips.append(time.perf_counter() - t)
             w = face.last_timing
             print(f"chunk {i + 1:3d}: {trips[-1]:.2f}s ({trips[-1] / face.chunk_seconds:.2f}x real time) = audio "
                   f"{w['audio_s']:.2f} + sample {w['sample_s']:.2f} + decode {w['decode_s']:.2f} + app side "
-                  f"{trips[-1] - w['total_s']:.2f}", flush=True)
+                  f"{trips[-1] - w['total_s']:.2f} | {mode} -> {w.get('prompt', '?')}", flush=True)
     finally:
         face.close()
     trips = np.array(trips[1:] or trips)

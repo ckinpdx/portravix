@@ -24,7 +24,9 @@ class Avatar:
         self.voice = Voice(self.speech, cfg["voice"])
         b = cfg["brain"]
         self.brain = Brain(b["url"], b["model"], C.resolve(b["persona"]), max_turns=int(b["history_turns"]),
-                           max_tokens=int(b["max_tokens"]), audio=bool(b["audio"]), log=log)
+                           max_tokens=int(b["max_tokens"]), audio=bool(b["audio"]),
+                           moods=[m for m, _ in C.moods(cfg)], log=log)
+        self.talk_mood = None  # the mood the latest reply was tagged with: picks the face's talking prompt
         self.ears = None
         self._ears_ready = threading.Event()
         threading.Thread(target=self._load_ears, daemon=True).start()  # ~2 s, in the shadow of the face
@@ -38,9 +40,19 @@ class Avatar:
         log(f"[avatar] models loaded in {time.perf_counter() - t:.1f}s")
         self.recorder = Recorder(record_path, fps=self.face.fps) if record_path else None
         self.player = Player(recorder=self.recorder, headless=headless, fps=self.face.fps)
-        self.renderer = Renderer(self.face, self.speech, self.player, log=log)
+        self._mood, self._mood_until = "idle", 0.0
+        self.renderer = Renderer(self.face, self.speech, self.player, mood=self.mood,
+                                 talk_mood=lambda: self.talk_mood, log=log)
         self.turns = []
         self._turn_lock = threading.Lock()  # one conversation turn at a time, whoever sends it
+
+    def set_mood(self, mood, seconds=30.0):
+        """What the face shows while nobody is speaking: "listen" (you are talking), "think" (her reply is being
+        written) or "idle". listen and think expire after `seconds`, so a lost event can't leave her stuck."""
+        self._mood, self._mood_until = mood, time.perf_counter() + seconds
+
+    def mood(self):
+        return self._mood if self._mood == "idle" or time.perf_counter() < self._mood_until else "idle"
 
     def _load_ears(self):
         e = self.cfg["ears"]
@@ -54,27 +66,35 @@ class Avatar:
         on_heard(text); the LLM then gets the words (and the audio, if [brain] audio is on). No words, no reply."""
         with self._turn_lock:
             t0 = time.perf_counter()
-            if audio is not None:
-                self._ears_ready.wait()
-                text = self.ears.transcribe(audio)
-                self.log(f"[ears] {len(audio) / 16000:.1f}s of speech heard in {time.perf_counter() - t0:.2f}s: {text!r}")
-                if on_heard:
-                    on_heard(text)
-                if not text:
-                    return {"t0": t0, "user": "", "reply": "", "voice": True}
-            return self._respond(text, images, on_sentence, audio, t0)
+            self.set_mood("think")
+            try:
+                if audio is not None:
+                    self._ears_ready.wait()
+                    text = self.ears.transcribe(audio)
+                    self.log(f"[ears] {len(audio) / 16000:.1f}s of speech heard in {time.perf_counter() - t0:.2f}s: {text!r}")
+                    if on_heard:
+                        on_heard(text)
+                    if not text:
+                        return {"t0": t0, "user": "", "reply": "", "voice": True}
+                return self._respond(text, images, on_sentence, audio, t0)
+            finally:
+                self.set_mood("idle")  # her speech is queued by now; chunks with speech talk regardless
 
     def _respond(self, text, images, on_sentence, audio=None, t0=None):
         t0 = t0 or time.perf_counter()
         sentences, ids = [], []
         for sentence in self.brain.reply(text, images, audio=audio):
+            if not sentences:  # the tag came before the first sentence: set the face's mood before its audio
+                self.talk_mood = self.brain.mood
+                if self.brain.moods:
+                    self.log(f"[brain] mood: {self.brain.mood or 'none (default talking prompt)'}")
             sentences.append(sentence)
             ids.append(self.voice.say(sentence))
             if on_sentence:
                 on_sentence(sentence)
         if ids:
             self.voice.wait(ids[-1])
-        turn = {"t0": t0, "user": text, "reply": " ".join(sentences), "voice": audio is not None,
+        turn = {"t0": t0, "user": text, "reply": " ".join(sentences), "voice": audio is not None, "mood": self.brain.mood,
                 "llm_first_sentence": self.brain.timing.get("first_sentence", t0) - t0,
                 "tts_first_audio": self.voice.first_audio_time[ids[0]] - t0 if ids else None}
         self.turns.append(turn)

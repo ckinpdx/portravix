@@ -1,5 +1,5 @@
 subject_definitions:
-<Subject 1> is the person in <Picture 1>.
+<Subject 1> is {subject}.
 
 summary:
 [reference generation] A static close-up of their face as they talk to the camera. Their facial identity is carried entirely from <Picture 1>.

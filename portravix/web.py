@@ -258,10 +258,13 @@ def create_app(avatar, streamer, log=print):
                     pcm = np.frombuffer(message["bytes"], "<i2").astype(np.float32) / 32768
                     for kind, audio in ears.feed(pcm):
                         if kind == "start":
+                            avatar.set_mood("listen")  # the face listens while you talk
                             await send_json({"type": "hearing"})
                         elif kind == "discard":  # too short to be words (a knock, a breath)
+                            avatar.set_mood("idle")
                             await send_json({"type": "listening"})
                         elif kind == "end":
+                            avatar.set_mood("think")  # respond() keeps it until her reply is queued
                             busy = True
                             await send_json({"type": "heard_audio", "seconds": round(len(audio) / RATE, 1)})
                             start_chat(audio=audio)

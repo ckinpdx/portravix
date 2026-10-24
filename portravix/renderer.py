@@ -7,9 +7,13 @@ import numpy as np
 
 
 class Renderer(threading.Thread):
-    def __init__(self, face, speech, player, margin=0.25, warmup=None, log=print):
+    def __init__(self, face, speech, player, margin=0.25, warmup=None, mood=None, talk_mood=None, log=print):
+        """mood: returns what the conversation is doing (idle / listen / think) for chunks without speech.
+        talk_mood: returns the latest reply's mood, for chunks with speech."""
         super().__init__(daemon=True)
         self.face, self.speech, self.player = face, speech, player
+        self.mood = mood or (lambda: "idle")
+        self.talk_mood = talk_mood or (lambda: None)
         self.margin = margin
         self.warmup = face.warmup if warmup is None else warmup
         self.log = log
@@ -30,7 +34,10 @@ class Renderer(threading.Thread):
                 continue
             face_audio, playback_audio, speech_seconds = self.speech.pop(self.face.chunk_seconds)
             t = time.perf_counter()
-            frames = self.face.render(face_audio)
+            if speech_seconds > 0:
+                frames = self.face.render(face_audio, mode="talk", mood=self.talk_mood())
+            else:
+                frames = self.face.render(face_audio, mode=self.mood())
             took = time.perf_counter() - t
             self.render_seconds = 0.8 * self.render_seconds + 0.2 * took
             if took > lead_before and self.player._played > 0:

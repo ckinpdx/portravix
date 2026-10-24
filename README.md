@@ -32,7 +32,7 @@ It contains no model weights; you download those yourself (see Setup).
   LLM. Developed and measured on an RTX 5090 (32 GB), Ryzen 9 7950X, Windows 11.
 - **Windows.** The code mostly avoids Windows-only calls, but it has only been run there.
 - **ComfyUI** with core MiniMax H3 support and the **[MMH3Tools](https://github.com/ckinpdx/ComfyUI-MMH3Tools) node
-  pack, 0.107.0 or newer**, in `custom_nodes`. Portravix runs H3 through ComfyUI's code, in ComfyUI's own Python,
+  pack, 0.108.0 or newer**, in `custom_nodes`. Portravix runs H3 through ComfyUI's code, in ComfyUI's own Python,
   without starting its server.
 - **Python 3.11+** for the app (CPU only).
 - **An OpenAI-compatible LLM server** running locally.
@@ -65,11 +65,13 @@ It contains no model weights; you download those yourself (see Setup).
    - `my/persona.md`: who the avatar is (start from `persona.example.md`). It is re-read when it changes.
    - optionally a voice WAV to clone; set `[voice] voice` to its path. Cloning needs the gated weights: accept the
      terms at [kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts) and run `hf auth login` once.
-   - optionally your own copy of `prompts/face.txt`, describing the person and setting in H3's structured prompt
-     format. Leave out what they say: the words come from the voice.
+   - `[face] subject`: a description of the person (age, look, hair). It fills `{subject}` in every prompt, and the
+     prompts carry it into each scene.
+   - optionally your own copies of the prompts in `prompts/`, in H3's structured prompt format (see Expressions
+     below). Leave out what they say: the words come from the voice.
 
-The first start encodes the face once with H3's text encoder (which briefly needs ~26 GB of VRAM) and caches it in
-`cache\`; later starts skip that until the face, prompt, size or window changes.
+The first start encodes every prompt once with H3's text encoder (which briefly needs ~26 GB of VRAM) and caches
+them in `cache\`; later starts skip that until the face, a prompt, the subject, the size or the window changes.
 
 ## Run it
 
@@ -114,6 +116,25 @@ you (typed or heard) -> LLM (streamed, sentence by sentence) -> Pocket TTS (CPU)
   [docs/live.md](https://github.com/ckinpdx/ComfyUI-MMH3Tools/blob/main/docs/live.md).
 - **The renderer** keeps about one chunk queued ahead of playback, rendering silence while nobody is talking, so idle
   flows into speech without a seam.
+- **Expressions:** each chunk gets the prompt that fits the moment, all encoded once at start, so switching costs
+  nothing:
+
+  | state | when | prompt (`[face]`) |
+  |---|---|---|
+  | talk, in a mood | the chunk has speech, and the reply was tagged with a mood the face has | `mood_prompts`: `talk_<mood>.txt` |
+  | talk | the chunk has speech | `prompt` |
+  | listen | the phone's mic hears you talking | `listen_prompt` |
+  | think | the reply is being written | `think_prompt` |
+  | idle | nothing is happening; rotates through the variations, each held `idle_hold` chunks | `idle_prompt` |
+
+  **Moods** tie the words to the face: when there are `talk_<mood>.txt` prompts, the LLM is asked to start each reply
+  with one mood tag (`[warm]`, `[playful]`, ...). The tag is never spoken or shown; it picks that reply's talking
+  prompt. Shipped: warm, playful, thoughtful, excited. Adding `talk_<name>.txt` adds a mood.
+
+  A talking prompt over silence makes the face mouth along to nothing, which is why the other states exist. A missing
+  prompt falls back to idle, then to talk. States change at chunk boundaries, so the face reacts a chunk or two
+  (2-4 s) after the moment. Prompt settings take wildcards, so the prompts can live in a folder someone else
+  maintains (another agent, say) and new files become new variations at the next start.
 - **The player** uses the audio as its clock: if rendering ever falls behind, picture and voice pause together
   rather than drift apart.
 - **Frames** come back from the worker through shared memory; the pipe carries only small messages.

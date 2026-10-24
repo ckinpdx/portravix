@@ -14,6 +14,8 @@ import numpy as np
 
 from . import config as C
 
+MODES = {"auto": 0, "talk": 1, "idle": 2, "listen": 3, "think": 4}  # the worker's per-chunk prompt choice
+
 
 class Face:
     AUDIO_RATE = 48000  # the worker's input rate, needed before it starts (the SpeechBuffer is built first)
@@ -36,6 +38,7 @@ class Face:
         self.frames_per_chunk = header["frames_per_chunk"]
         self.chunk_seconds = self.frames_per_chunk / self.fps
         self.warmup = 0  # the worker renders its own warm-up window before it reports ready
+        self.moods = list(header.get("moods", []))  # moods with their own talking prompt
         self._samples = header["samples_per_chunk"]
         self._shape = (self.frames_per_chunk, header["height"], header["width"], 3)
         self._shm = shared_memory.SharedMemory(name=header["shm"])
@@ -54,14 +57,18 @@ class Face:
             buf += part
         return buf
 
-    def render(self, face_audio):
-        """face_audio: chunk_seconds of 48 kHz mono. Returns uint8 RGB frames [frames_per_chunk, H, W, 3]."""
+    def render(self, face_audio, mode="auto", mood=None):
+        """face_audio: chunk_seconds of 48 kHz mono. mode: what the conversation is doing while this chunk plays
+        (talk / idle / listen / think; auto = talk if there is speech, else idle); a chunk with speech always
+        talks. mood: which talking prompt, if the face has one for it (see self.moods). Returns uint8 RGB frames
+        [frames_per_chunk, H, W, 3]."""
         audio = np.asarray(face_audio, "<f4")
         if len(audio) != self._samples:
             audio = np.pad(audio[:self._samples], (0, max(0, self._samples - len(audio))))
         t0 = time.perf_counter()
         body = audio.tobytes()
-        self._proc.stdin.write(b"C" + struct.pack("<I", len(body)) + body)
+        mood_byte = self.moods.index(mood) + 1 if mood in self.moods else 0
+        self._proc.stdin.write(b"C" + struct.pack("<BBI", MODES.get(mode, 0), mood_byte, len(body)) + body)
         self._proc.stdin.flush()
         t1 = time.perf_counter()
         if self._read(1) != b"F":
