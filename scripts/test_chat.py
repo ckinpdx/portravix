@@ -1,9 +1,11 @@
 """End-to-end conversation test: typed prompts in, spoken replies out, with per-stage latency and render health.
 
-    python scripts\\test_chat.py [--config config.toml] [--headless] [--no-record]
+    python scripts\\test_chat.py [--config config.toml] [--headless] [--no-record] [--memory]
 
 --headless: no window or local audio (a virtual clock plays the audio); the recording is the output.
 --no-record: skip the session recording (its video encoding uses CPU and adds ~0.1 s per chunk).
+--memory: keep the configured memory on. Off by default, so test conversations never end up in the real memory file
+(scripts\\test_memory.py tests memory on a temporary file).
 """
 import argparse
 import os
@@ -29,10 +31,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--config", default=None)
 parser.add_argument("--headless", action="store_true")
 parser.add_argument("--no-record", action="store_true")
+parser.add_argument("--memory", action="store_true")
 args = parser.parse_args()
+cfg = C.load(args.config)
+if not args.memory:
+    cfg["memory"]["file"] = ""
 
 os.makedirs(os.path.join(ROOT, "recordings"), exist_ok=True)
-avatar = Avatar(C.load(args.config), headless=args.headless,
+avatar = Avatar(cfg, headless=args.headless,
                 record_path=None if args.no_record else
                 os.path.join(ROOT, "recordings", f"chat_{time.strftime('%Y%m%d-%H%M%S')}.mp4"))
 done = threading.Event()

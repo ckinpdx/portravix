@@ -48,6 +48,17 @@ DEFAULTS = {
         "history_turns": 20,
         "audio": True,
     },
+    "memory": {
+        "file": "my/memory.md",       # what the avatar remembers across sessions; empty: no memory
+        "user_name": "",              # what the memory and the app's instructions call you (empty: "the user")
+        "budget_tokens": 1200,        # memory given to the LLM (newest lines first), all but the summaries
+        "summaries": 5,               # conversation summaries given to the LLM
+        "keep_summaries": 20,         # kept in the file; older ones move to <file>_archive.md
+        "quiet_minutes": 10,          # quiet this long: curate, and the next exchange starts a new conversation
+    },
+    "debug": {
+        "transcript": False,          # write every exchange to logs/transcript_<session>.jsonl
+    },
     "ears": {
         "parakeet_dir": "",
         "threads": 4,

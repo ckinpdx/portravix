@@ -13,6 +13,8 @@ import wave
 
 import numpy as np
 
+from .memory import now_text
+
 # The persona (system prompt) is re-read whenever its file changes, so it can be edited while the avatar runs.
 PERSONA_SOFT_TOKENS = 2000    # above this a 4B model follows the persona less reliably
 PERSONA_HARD_TOKENS = 12000   # above this it may not fit the 16k context with history and reply
@@ -34,6 +36,13 @@ MOOD_INSTRUCTION = (
     "Your face shows a mood while you speak. Begin every reply with exactly one mood tag in square brackets, chosen "
     "from: {tags}. It sets your expression and is never spoken; pick the one that fits how you feel about what you "
     "are saying. Then reply as usual.")
+
+# Every user message starts with a CURRENT STATE block (the date and time, and how long since the last conversation),
+# kept in the history so the model sees the chronology. It is marked as context, as NVIDIA's Nemotron Bolt prompting
+# guide recommends for state the model should not treat as a request.
+STATE_INSTRUCTION = (
+    "Each message from {user} starts with a # CURRENT STATE block written by the app, not by {user}: the date and "
+    "time, and similar facts. It is background for you, not something {user} said; never read it out.")
 
 _SENTENCE_END = re.compile(r'([.!?…]+["\')\]]*)\s+')
 _MARKUP = re.compile(r"[*_#`~>|\[\]{}]")
@@ -64,11 +73,15 @@ def audio_part(audio, rate=16000):
 
 
 class Brain:
-    def __init__(self, url, model, persona_file, max_turns=20, max_tokens=300, audio=True, moods=(), log=print):
+    def __init__(self, url, model, persona_file, max_turns=20, max_tokens=300, audio=True, moods=(), memory=None,
+                 user="the user", log=print):
         """audio: send voice turns' audio to the model as well as the words (needs an audio-capable model).
-        moods: the moods the face has a talking prompt for; the model tags each reply with one (self.mood)."""
+        moods: the moods the face has a talking prompt for; the model tags each reply with one (self.mood).
+        memory: a portravix.memory.Memory whose notes join the system prompt (re-read when the file changes).
+        user: what to call the person talking, in the instructions the app adds."""
         self.url, self.model, self.max_tokens, self.max_turns, self.audio = url, model, max_tokens, max_turns, audio
         self.persona_file, self.log = persona_file, log
+        self.memory, self.user = memory, user
         self.moods = [m.lower() for m in moods]
         self.mood = None  # the latest reply's mood, when it tagged one the face has
         self.system = DEFAULT_PERSONA
@@ -120,6 +133,10 @@ class Brain:
 
     def _messages(self, user_content):
         system = self.system
+        remembered = self.memory.block() if self.memory else ""
+        if remembered:
+            system += "\n\n" + remembered
+        system += "\n\n" + STATE_INSTRUCTION.format(user=self.user)
         if self.moods:
             system += "\n\n" + MOOD_INSTRUCTION.format(tags=", ".join(f"[{m}]" for m in self.moods))
         return [{"role": "system", "content": system}, *self.history[-2 * self.max_turns:],
@@ -143,14 +160,15 @@ class Brain:
         images: data URLs (e.g. webcam JPEGs) attached to this turn only.
         audio: the voice message user_text was heard from (16 kHz float32), attached to this turn only."""
         self.load_persona()
+        state = self.state_block()
         if audio is not None and self.audio:
             content = [audio_part(audio), *({"type": "image_url", "image_url": {"url": url}} for url in images),
-                       {"type": "text", "text": VOICE_PROMPT.format(user_text)}]
+                       {"type": "text", "text": state + VOICE_PROMPT.format(user_text)}]
         elif images:
             content = [*({"type": "image_url", "image_url": {"url": url}} for url in images),
-                       {"type": "text", "text": user_text}]
+                       {"type": "text", "text": state + user_text}]
         else:
-            content = user_text
+            content = state + user_text
         body = {"model": self.model, "messages": self._messages(content), "stream": True,
                 "max_tokens": self.max_tokens, "chat_template_kwargs": {"enable_thinking": False}}
         request = urllib.request.Request(self.url, json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -187,4 +205,12 @@ class Brain:
             self.timing.setdefault("first_sentence", time.perf_counter())
             yield tail
         self.timing["done"] = time.perf_counter()
-        self.history += [{"role": "user", "content": user_text}, {"role": "assistant", "content": "".join(full)}]
+        self.history += [{"role": "user", "content": state + user_text}, {"role": "assistant", "content": "".join(full)}]
+
+    def state_block(self, now=None):
+        """The CURRENT STATE block for the next message: the date and time, and on the session's first message how long
+        ago the previous conversation was (when memory knows)."""
+        lines = [f"It is {now_text(now)}."]
+        if not self.history and self.memory and self.memory.previous_note():
+            lines.append(self.memory.previous_note())
+        return "# CURRENT STATE\n" + "\n".join(lines) + "\n----------------\n"

@@ -1,4 +1,6 @@
 """Wires the pieces together: Brain (LLM) -> Voice (TTS) -> SpeechBuffer -> Renderer (face) -> Player."""
+import json
+import os
 import threading
 import time
 
@@ -6,6 +8,7 @@ from . import config as C
 from .brain import Brain
 from .ears import Transcriber
 from .face import Face
+from .memory import from_config as memory_from_config
 from .player import Player
 from .recorder import Recorder
 from .renderer import Renderer
@@ -23,9 +26,11 @@ class Avatar:
         self.speech = SpeechBuffer(in_rate=24000, face_rate=Face.AUDIO_RATE)
         self.voice = Voice(self.speech, cfg["voice"])
         b = cfg["brain"]
+        self.memory = memory_from_config(cfg, log=log)  # None when [memory] file is empty
         self.brain = Brain(b["url"], b["model"], C.resolve(b["persona"]), max_turns=int(b["history_turns"]),
                            max_tokens=int(b["max_tokens"]), audio=bool(b["audio"]),
-                           moods=[m for m, _ in C.moods(cfg)], log=log)
+                           moods=[m for m, _ in C.moods(cfg)], memory=self.memory,
+                           user=cfg["memory"]["user_name"] or "the user", log=log)
         self.talk_mood = None  # the mood the latest reply was tagged with: picks the face's talking prompt
         self.ears = None
         self._ears_ready = threading.Event()
@@ -44,7 +49,10 @@ class Avatar:
         self.renderer = Renderer(self.face, self.speech, self.player, mood=self.mood,
                                  talk_mood=lambda: self.talk_mood, log=log)
         self.turns = []
-        self._turn_lock = threading.Lock()  # one conversation turn at a time, whoever sends it
+        self._turn_lock = threading.Lock()
+        # [debug] transcript: every exchange of this session, one JSON line each, for looking into how it talks
+        self.transcript_path = (os.path.join(C.ROOT, "logs", f"transcript_{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
+                                if cfg["debug"]["transcript"] else None)  # one conversation turn at a time, whoever sends it
 
     def set_mood(self, mood, seconds=30.0):
         """What the face shows while nobody is speaking: "listen" (you are talking), "think" (her reply is being
@@ -98,7 +106,24 @@ class Avatar:
                 "llm_first_sentence": self.brain.timing.get("first_sentence", t0) - t0,
                 "tts_first_audio": self.voice.first_audio_time[ids[0]] - t0 if ids else None}
         self.turns.append(turn)
+        if self.memory:
+            self.memory.record(text, turn["reply"])
+        if self.transcript_path:
+            self._log_transcript(turn)
         return turn
+
+    def _log_transcript(self, turn):
+        """Append one exchange to the session's transcript: what was said, the spoken reply, the model's raw text
+        (with its mood tag and anything stripped before speech) and the reply's timing."""
+        entry = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "voice": turn["voice"], "user": turn["user"],
+                 "reply": turn["reply"], "raw": self.brain.history[-1]["content"] if self.brain.history else "",
+                 "mood": turn["mood"], "llm_first_sentence_s": round(turn["llm_first_sentence"], 3)}
+        try:
+            os.makedirs(os.path.dirname(self.transcript_path), exist_ok=True)
+            with open(self.transcript_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as e:
+            self.log(f"[debug] transcript not written ({e})")
 
     def mouth_start(self, turn, timeout=10):
         """Seconds from the message to the first chunk with her speech starting to play."""
@@ -131,12 +156,32 @@ class Avatar:
             time.sleep(0.05)
         return True
 
+    def _memory_loop(self):
+        """Curate memory in quiet moments: exchanges left over from an earlier session as soon as the face is live,
+        then whenever the conversation has been quiet for [memory] quiet_minutes. It holds the turn lock, so a message
+        sent meanwhile waits for it (a few seconds). The launcher also curates when it stops the avatar."""
+        self.renderer.ready.wait()
+        quiet = float(self.cfg["memory"]["quiet_minutes"]) * 60
+        leftovers = True
+        while not self.renderer.stop_event.is_set():
+            if self.memory.has_pending() and (leftovers or self.memory.quiet_seconds() >= quiet)                     and not self.player.speaking and self._turn_lock.acquire(blocking=False):
+                try:
+                    self.memory.curate()
+                except Exception as e:
+                    self.log(f"[memory] curating failed ({type(e).__name__}: {e}); the exchanges stay pending")
+                finally:
+                    self._turn_lock.release()
+            leftovers = False
+            self.renderer.stop_event.wait(15)
+
     def run(self, until=None):
         """Start rendering and show the window (main thread). Returns when the window closes."""
         t = time.perf_counter()
         threading.Thread(target=lambda: self.renderer.ready.wait() and self.log(
             f"[avatar] live after {time.perf_counter() - t:.1f}s"), daemon=True).start()
         self.renderer.start()
+        if self.memory:
+            threading.Thread(target=self._memory_loop, daemon=True).start()
         try:
             self.player.run(until=until)
         finally:

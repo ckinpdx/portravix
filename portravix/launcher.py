@@ -28,6 +28,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse
 
 from . import config as C
+from . import memory as M
 
 STATIC = os.path.join(C.ROOT, "static")
 LOGS = os.path.join(C.ROOT, "logs")
@@ -183,8 +184,20 @@ class AvatarProcess:
                 with contextlib.suppress(psutil.Error):
                     p.kill()
             self.proc = None
+            self._save_memory()
             self.gpu.release_brain()
             self._set("stopped")
+
+    def _save_memory(self):
+        """Curate what the stopped session said (Stop ends it without warning) while its LLM is still loaded. On
+        failure the exchanges stay pending, and the next start curates them."""
+        try:
+            memory = M.from_config(self.cfg, log=self.log)
+            if memory and memory.has_pending():
+                self._set("stopping", "saving what it remembers")
+                memory.curate()
+        except Exception as e:
+            self.log(f"[launcher] memory not saved now ({type(e).__name__}: {e}); the next start will")
 
     def _last_log_lines(self, n=4):
         if not self.log_path or not os.path.exists(self.log_path):

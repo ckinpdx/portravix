@@ -63,11 +63,12 @@ It contains no model weights; you download those yourself (see Setup).
    server and model, and your face. Personal files go in `my/`, which git ignores:
    - `my/face.png`: a clear, front-facing portrait, ideally square.
    - `my/persona.md`: who the avatar is (start from `persona.example.md`). It is re-read when it changes.
+   - `my/memory.md` is created on first use: what the avatar remembers about you (see Memory below). Set
+     `[memory] user_name` to what it should call you.
    - optionally a voice WAV to clone; set `[voice] voice` to its path. Cloning needs the gated weights: accept the
      terms at [kyutai/pocket-tts](https://huggingface.co/kyutai/pocket-tts) and run `hf auth login` once.
    - `[face] subject`: a description of the person (age, look, hair). It fills `{subject}` in every prompt, and the
-     prompts carry it into each scene.
-   - optionally your own copies of the prompts in `prompts/`, in H3's structured prompt format (see Expressions
+     prompts carry it into each scene.   - optionally your own copies of the prompts in `prompts/`, in H3's structured prompt format (see Expressions
      below). Leave out what they say: the words come from the voice.
 
 The first start encodes every prompt once with H3's text encoder (which briefly needs ~26 GB of VRAM) and caches
@@ -135,6 +136,17 @@ you (typed or heard) -> LLM (streamed, sentence by sentence) -> Pocket TTS (CPU)
   prompt falls back to idle, then to talk. States change at chunk boundaries, so the face reacts a chunk or two
   (2-4 s) after the moment. Prompt settings take wildcards, so the prompts can live in a folder someone else
   maintains (another agent, say) and new files become new variations at the next start.
+- **Memory:** `[memory] file` (default `my/memory.md`) is a Markdown file anyone can read and edit, with three
+  sections of `- ` lines: facts about you, things the avatar has said about itself (so it does not contradict itself
+  later), and one dated summary per conversation. Each exchange is kept in `cache\` until the conversation has been
+  quiet for `quiet_minutes`, or the launcher's Stop ends it; then the same LLM reads it and answers in a fixed JSON
+  structure (summary, new facts, corrections, self-claims), which the app applies line by line. The model never
+  rewrites the file, so it cannot drop what is there, and edits made meanwhile are kept. Exchanges a crash leaves
+  behind are written down at the next start. Every reply's system prompt gets the newest lines that fit
+  `budget_tokens` (1,200; a 4B model follows a short prompt better) plus the newest `summaries`; the file itself is
+  never cut, so pruning it is up to you. Older summaries move to `memory_archive.md`.
+- **Current state:** each message to the LLM starts with a `# CURRENT STATE` block (the date and time, and on the
+  first message how long since the last conversation), marked as background rather than something you said.
 - **The player** uses the audio as its clock: if rendering ever falls behind, picture and voice pause together
   rather than drift apart.
 - **Frames** come back from the worker through shared memory; the pipe carries only small messages.
@@ -152,11 +164,18 @@ you (typed or heard) -> LLM (streamed, sentence by sentence) -> Pocket TTS (CPU)
 
 - `scripts\test_face.py <speech.wav>`: the face on its own. Streams the WAV (with silence before and after) through the
   worker chunk by chunk, prints each chunk's time against real time, and writes `recordings\face_test.mp4`.
-- `scripts\test_chat.py [--headless] [--no-record]`: three typed prompts answered end to end, with per-stage latency,
-  render health and audio underruns.
+- `scripts\test_chat.py [--headless] [--no-record] [--memory]`: three typed prompts answered end to end, with
+  per-stage latency, render health and audio underruns. Memory is off unless `--memory` is given, so test
+  conversations stay out of your memory file.
+- `scripts\test_memory.py`: memory end to end with your LLM, on a temporary file: a short conversation, the curator
+  pass, then a fresh session asked what it remembers.
+- `tests\test_memory.py`: the memory file handling, no LLM needed.
+- `[debug] transcript = true` writes every exchange of a session to `logs\transcript_<start time>.jsonl` (your words,
+  the spoken reply, the model's raw text with its mood tag, the mood, the time to the first sentence). Off by default.
 
 ## Known limits
 
 - A faint colour step can show at chunk seams every ~2 s.
 - One face per session, square output, English speech recognition.
+- Memory is only as good as a 4B model's notes: check the file now and then, and correct or prune it.
 - Not tested on Linux or macOS, or on GPUs without FP4 support (a non-NVFP4 H3 model would need more VRAM and time).

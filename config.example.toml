@@ -34,7 +34,7 @@ idle_prompt = "prompts/idle*.txt"          # while nothing happens: rotated vari
 idle_hold = 2                              # chunks each idle variation lasts (~2 s each)
 listen_prompt = "prompts/listen.txt"       # while you are talking to it (hands-free mic)
 think_prompt = "prompts/think.txt"         # while its reply is being written
-size = 512        # square, a multiple of 32. 512 is the largest that keeps up on an RTX 5090.
+size = 512       # square, a multiple of 32. 512 is the largest that keeps up on an RTX 5090.
 window = 56       # frames per chunk: 56 has more headroom, 39 starts replies ~0.7 s sooner but stalls more easily
 steps = 2
 seed = 1
@@ -59,6 +59,22 @@ history_turns = 20
 # Send your voice clip with the words, so the reply can follow your tone. Needs an audio-capable model
 # (Gemma 4 E4B is); set false for a text-only model.
 audio = true
+
+[memory]
+# What the avatar remembers across sessions: one Markdown file you (or anyone) can read and edit. After a
+# conversation, the same LLM writes down facts about you, things the avatar said about itself (so it stays
+# consistent), and a one-line summary. Empty file = no memory.
+file = "my/memory.md"
+user_name = ""          # what the memory calls you, e.g. "Sam". Empty: "the user".
+budget_tokens = 1200    # how much of it the LLM is given: the newest lines that fit (the file itself is never cut)
+summaries = 5           # conversation summaries the LLM is given
+keep_summaries = 20     # summaries kept in the file; older ones move to my/memory_archive.md
+quiet_minutes = 10      # after this long without a message the conversation is written down (Stop also does it)
+
+[debug]
+# Write every exchange (your words, the reply, the model's raw text, its mood) to logs/transcript_<session>.jsonl,
+# one JSON line each, to look into how it talks. logs/ is git-ignored. Off by default: these are your conversations.
+transcript = false
 
 [ears]
 # A local copy of istupakov/parakeet-tdt-0.6b-v2-onnx. Empty: downloaded on first use (int8 set, ~660 MB).
